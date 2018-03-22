@@ -23,10 +23,16 @@ import io.gravitee.am.identityprovider.ldap.LdapIdentityProviderConfiguration;
 import io.gravitee.am.identityprovider.ldap.LdapIdentityProviderMapper;
 import io.gravitee.am.identityprovider.ldap.LdapIdentityProviderRoleMapper;
 import io.gravitee.am.identityprovider.ldap.authentication.spring.LdapAuthenticationProviderConfiguration;
+import org.ldaptive.*;
+import org.ldaptive.auth.AuthenticationRequest;
+import org.ldaptive.auth.AuthenticationResponse;
+import org.ldaptive.auth.Authenticator;
+import org.ldaptive.control.ResponseControl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Import;
 import org.springframework.ldap.NamingException;
 import org.springframework.ldap.core.DirContextOperations;
@@ -51,8 +57,8 @@ public class LdapAuthenticationProvider implements AuthenticationProvider, Initi
 
     private static final String MEMBEROF_ATTRIBUTE = "memberOf";
 
-    @Autowired
-    private LdapAuthenticator authenticator;
+    //@Autowired
+    //private LdapAuthenticator authenticator;
 
     @Autowired
     private LdapAuthoritiesPopulator authoritiesPopulator;
@@ -70,6 +76,16 @@ public class LdapAuthenticationProvider implements AuthenticationProvider, Initi
     private LdapIdentityProviderConfiguration configuration;
 
     private String identifierAttribute = "uid";
+
+    @Autowired
+    private Authenticator authenticator;
+
+    @Autowired
+    private ConnectionFactory connectionFactory;
+
+    @Autowired
+    @Qualifier("groupSearchExecutor")
+    private SearchExecutor groupSearchExecutor;
 
     @Override
     public void afterPropertiesSet() throws Exception {
@@ -91,10 +107,37 @@ public class LdapAuthenticationProvider implements AuthenticationProvider, Initi
     @Override
     public User loadUserByUsername(Authentication authentication) {
         try {
+            String username = (String) authentication.getPrincipal();
+            String password = (String) authentication.getCredentials();
+            // authenticate user
+            AuthenticationResponse response = authenticator.authenticate(
+                    new AuthenticationRequest(username, new Credential(password), ReturnAttributes.ALL_USER.value()));
+            if (response.getResult()) { // authentication succeeded
+                LdapEntry entry = response.getLdapEntry();
+                // fetch user groups
+                try {
+                    groupSearchExecutor.getSearchFilter().setParameter(0, entry.getDn());
+                    SearchResult searchResult = groupSearchExecutor.search(connectionFactory).getResult();
+                    LdapEntry ldapEntry = searchResult.getEntry();
+                } catch (Exception e) {
+                    LOGGER.warn("No group found for user {}", entry.getDn(), e);
+                }
+
+            } else { // authentication failed
+                String msg = response.getMessage(); // read the failure message
+            }
+        } catch (LdapException e) {
+            e.printStackTrace();
+        }
+
+        return null;
+        /*try {
             ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
             DirContextOperations authenticate;
             try {
                 Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
+
+                authenticator.authenticate(new AuthenticationRequest(authentication.getPrincipal().toString(), new Credential(authentication.getCredentials().toString())));
 
                 // authenticate user
                 authenticate = authenticator.authenticate(new UsernamePasswordAuthenticationToken(
@@ -120,7 +163,7 @@ public class LdapAuthenticationProvider implements AuthenticationProvider, Initi
         } catch (NamingException ldapAccessFailure) {
             throw new InternalAuthenticationServiceException(
                     ldapAccessFailure.getMessage(), ldapAccessFailure);
-        }
+        }*/
     }
 
     @Override
